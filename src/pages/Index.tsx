@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Icon from "@/components/ui/icon";
 
 const HERO_IMAGE = "https://cdn.poehali.dev/projects/b380b5e3-d103-4a80-8f4d-226adb8c7954/files/87bfe75d-d47e-4a8f-bb77-6b13f60c32f5.jpg";
 
-type Page = "home" | "catalog" | "profile" | "cart" | "contacts" | "faq";
+const GET_ORDER_URL = "https://functions.poehali.dev/6c0971a2-a6d5-45e0-9825-4d03ed5aa200";
+
+type Page = "home" | "catalog" | "profile" | "cart" | "contacts" | "faq" | "success";
 
 const SUBJECTS = [
   { icon: "Calculator", label: "Математика", count: 1420, color: "from-purple-500 to-blue-500" },
@@ -47,6 +49,21 @@ export default function Index() {
   const [cartItems, setCartItems] = useState(CART_DEFAULT);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [successPaymentId, setSuccessPaymentId] = useState<string | null>(null);
+
+  // Определяем возврат с ЮKassa по ?payment=success, payment_id берём из URL или sessionStorage
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('payment') === 'success') {
+      const pid = params.get('payment_id')
+        || sessionStorage.getItem('ym_payment_id')
+        || 'unknown';
+      sessionStorage.removeItem('ym_payment_id');
+      setSuccessPaymentId(pid);
+      setPage('success');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   const cartTotal = cartItems.reduce((sum, i) => sum + i.price, 0);
   const nav = (p: Page) => { setPage(p); setMobileMenu(false); window.scrollTo(0, 0); };
@@ -111,6 +128,7 @@ export default function Index() {
         {page === "cart" && <CartPage cartItems={cartItems} setCartItems={setCartItems} cartTotal={cartTotal} nav={nav} />}
         {page === "contacts" && <ContactsPage />}
         {page === "faq" && <FaqPage items={FAQ_ITEMS} openFaq={openFaq} setOpenFaq={setOpenFaq} />}
+        {page === "success" && <SuccessPage nav={nav} paymentId={successPaymentId} setCartItems={setCartItems} />}
       </div>
 
       {/* FOOTER */}
@@ -601,12 +619,16 @@ function CartPage({ cartItems, setCartItems, cartTotal, nav }: {
         body: JSON.stringify({
           amount: cartTotal,
           description: `УчёбаМаркет: ${description}`,
-          return_url: window.location.href + "?payment=success",
+          return_url: `${window.location.origin}${window.location.pathname}?payment=success`,
           items: cartItems.map(i => ({ id: i.id, title: i.title, price: i.price })),
         }),
       });
       const data = await res.json();
       if (data.confirmation_url) {
+        // Сохраняем payment_id — подхватим после возврата с ЮKassa
+        if (data.payment_id) {
+          sessionStorage.setItem('ym_payment_id', data.payment_id);
+        }
         window.location.href = data.confirmation_url;
       } else {
         setError(data.error || "Не удалось создать платёж. Попробуй позже.");
@@ -839,6 +861,170 @@ function FaqPage({ items, openFaq, setOpenFaq }: { items: typeof FAQ_ITEMS; open
             Написать в поддержку
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Страница успешной оплаты ────────────────────────────────────────────────
+
+type OrderItem = { id: number; title: string; price: number; subject?: string };
+type Order = {
+  payment_id: string;
+  status: string;
+  amount: number;
+  items: OrderItem[];
+  paid_at: string | null;
+};
+
+function SuccessPage({ nav, paymentId, setCartItems }: {
+  nav: (p: Page) => void;
+  paymentId: string | null;
+  setCartItems: (items: typeof CART_DEFAULT) => void;
+}) {
+  const [order, setOrder] = useState<Order | null>(null);
+  const [loadingOrder, setLoadingOrder] = useState(true);
+  const [pollCount, setPollCount] = useState(0);
+
+  useEffect(() => {
+    if (!paymentId || paymentId === 'unknown') {
+      setLoadingOrder(false);
+      return;
+    }
+
+    let attempts = 0;
+    const maxAttempts = 8;
+
+    const poll = async () => {
+      attempts++;
+      setPollCount(attempts);
+      try {
+        const res = await fetch(`${GET_ORDER_URL}?payment_id=${paymentId}`);
+        const data = await res.json();
+        if (data.status === 'paid' || data.status === 'succeeded') {
+          setOrder(data);
+          setLoadingOrder(false);
+          setCartItems([]);
+          return;
+        }
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 2000);
+        } else {
+          setOrder(data);
+          setLoadingOrder(false);
+        }
+      } catch {
+        if (attempts < maxAttempts) setTimeout(poll, 2000);
+        else setLoadingOrder(false);
+      }
+    };
+
+    poll();
+  }, [paymentId]);
+
+  return (
+    <div className="min-h-[80vh] flex items-center justify-center px-4 py-16">
+      <div className="max-w-lg w-full">
+        {loadingOrder ? (
+          <div className="text-center">
+            <div className="relative w-24 h-24 mx-auto mb-8">
+              <div className="absolute inset-0 rounded-full opacity-20 animate-pulse" style={{ background: 'radial-gradient(circle, #a855f7, transparent)' }} />
+              <div className="w-24 h-24 rounded-full border-4 border-white/10 border-t-purple-500 animate-spin" />
+              <Icon name="CreditCard" size={32} className="text-purple-400 absolute inset-0 m-auto" />
+            </div>
+            <h1 className="font-display text-3xl font-bold text-white mb-3">ОБРАБАТЫВАЕМ ПЛАТЁЖ</h1>
+            <p className="text-white/50 text-sm">
+              Подтверждаем оплату{pollCount > 1 ? ` (попытка ${pollCount})` : ''}...
+            </p>
+            <div className="flex justify-center gap-1 mt-4">
+              {[0,1,2].map(i => (
+                <div key={i} className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" style={{ animationDelay: `${i * 0.2}s` }} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="animate-fade-in-up">
+            <div className="relative w-28 h-28 mx-auto mb-8">
+              <div className="absolute inset-0 rounded-full blur-2xl opacity-40" style={{ background: 'radial-gradient(circle, #4ade80, transparent)' }} />
+              <div className="w-28 h-28 rounded-full flex items-center justify-center relative" style={{ background: 'linear-gradient(135deg, rgba(74,222,128,0.2), rgba(16,185,129,0.2))', border: '2px solid rgba(74,222,128,0.4)' }}>
+                <Icon name="CheckCircle" size={52} className="text-green-400" />
+              </div>
+            </div>
+
+            <div className="text-center mb-8">
+              <h1 className="font-display text-4xl font-bold text-white mb-3">
+                ОПЛАТА <span className="text-green-400">ПРОШЛА!</span>
+              </h1>
+              <p className="text-white/50 text-base">
+                {order?.status === 'paid'
+                  ? 'Работы куплены и доступны для скачивания'
+                  : 'Платёж принят — доступ будет открыт через несколько секунд'}
+              </p>
+            </div>
+
+            {order && order.items && order.items.length > 0 && (
+              <div className="rounded-2xl border border-white/7 bg-white/3 p-5 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <p className="font-display font-semibold text-white text-sm uppercase tracking-wide">Купленные работы</p>
+                  <span className="text-white/40 text-xs">{order.items.length} {order.items.length === 1 ? 'работа' : 'работы'}</span>
+                </div>
+                <div className="space-y-3">
+                  {order.items.map((item, i) => (
+                    <div key={i} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-white/5">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl flex-shrink-0 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(168,85,247,0.3), rgba(0,212,255,0.2))' }}>
+                          <Icon name="FileText" size={16} className="text-purple-300" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-white text-xs font-medium line-clamp-1">{item.title}</p>
+                          <p className="text-white/40 text-[11px] mt-0.5">{item.price} ₽</p>
+                        </div>
+                      </div>
+                      <button
+                        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
+                        style={{ background: 'rgba(0,212,255,0.1)', border: '1px solid rgba(0,212,255,0.3)', color: '#00d4ff' }}
+                      >
+                        <Icon name="Download" size={12} />
+                        Скачать
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {order.amount && (
+                  <div className="border-t border-white/5 mt-4 pt-4 flex justify-between items-center">
+                    <span className="text-white/50 text-sm">Итого оплачено:</span>
+                    <span className="font-display font-bold text-white text-lg">{order.amount} ₽</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => nav('profile')}
+                className="w-full py-4 rounded-2xl font-bold text-white text-base btn-glow flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg, #a855f7, #7c3aed)' }}
+              >
+                <Icon name="User" size={18} />
+                Перейти в личный кабинет
+              </button>
+              <button
+                onClick={() => nav('catalog')}
+                className="w-full py-3.5 rounded-2xl font-medium text-white/70 text-sm border border-white/10 bg-white/5 hover:bg-white/10 transition-all"
+              >
+                Продолжить покупки
+              </button>
+            </div>
+
+            <div className="mt-6 rounded-xl border border-green-500/20 bg-green-500/5 p-4 flex items-start gap-3">
+              <Icon name="Mail" size={16} className="text-green-400 flex-shrink-0 mt-0.5" />
+              <p className="text-white/50 text-xs leading-relaxed">
+                Копия чека отправлена на твою почту. Все работы доступны в{' '}
+                <button onClick={() => nav('profile')} className="text-neon-cyan underline">личном кабинете</button>.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,32 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Empty body returns 400",
+      "method": "POST",
+      "path": "/",
+      "body": {},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Valid payment.succeeded event",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "type": "notification",
+        "event": "payment.succeeded",
+        "object": {
+          "id": "test_payment_id_123",
+          "status": "succeeded",
+          "amount": {"value": "100.00", "currency": "RUB"}
+        }
+      },
+      "expectedStatus": 200
+    }
+  ]
+}

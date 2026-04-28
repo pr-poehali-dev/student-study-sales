@@ -1,0 +1,22 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Missing payment_id returns 400",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 400
+    },
+    {
+      "name": "Unknown payment_id returns 404",
+      "method": "GET",
+      "path": "/?payment_id=nonexistent_test_id",
+      "expectedStatus": 404
+    }
+  ]
+}
