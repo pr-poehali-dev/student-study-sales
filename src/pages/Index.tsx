@@ -579,11 +579,44 @@ function ProfilePage({ nav, cartItems }: { nav: (p: Page) => void; cartItems: ty
   );
 }
 
+const PAYMENT_URL = "https://functions.poehali.dev/4bdff667-0a64-46e2-8e9c-68cd78ea6c76";
+
 function CartPage({ cartItems, setCartItems, cartTotal, nav }: {
   cartItems: typeof CART_DEFAULT; setCartItems: (items: typeof CART_DEFAULT) => void;
   cartTotal: number; nav: (p: Page) => void;
 }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [promo, setPromo] = useState("");
   const removeItem = (id: number) => setCartItems(cartItems.filter(i => i.id !== id));
+
+  const handlePay = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const description = cartItems.map(i => i.title).join(", ").slice(0, 128);
+      const res = await fetch(PAYMENT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: cartTotal,
+          description: `УчёбаМаркет: ${description}`,
+          return_url: window.location.href + "?payment=success",
+          items: cartItems.map(i => ({ id: i.id, title: i.title, price: i.price })),
+        }),
+      });
+      const data = await res.json();
+      if (data.confirmation_url) {
+        window.location.href = data.confirmation_url;
+      } else {
+        setError(data.error || "Не удалось создать платёж. Попробуй позже.");
+      }
+    } catch {
+      setError("Ошибка соединения. Проверь интернет и попробуй снова.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
@@ -638,14 +671,55 @@ function CartPage({ cartItems, setCartItems, cartTotal, nav }: {
                   <span className="font-display font-bold text-2xl text-white">{cartTotal} ₽</span>
                 </div>
               </div>
-              <input type="text" placeholder="Промокод" className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-white/30 text-sm focus:outline-none focus:border-purple-500/50 mb-4" />
-              <button className="w-full py-4 rounded-2xl font-bold text-white text-base btn-glow mb-3" style={{ background: 'linear-gradient(135deg, #a855f7, #7c3aed)' }}>
-                Оплатить {cartTotal} ₽
-              </button>
-              <div className="flex justify-center gap-3 text-white/30">
-                <Icon name="CreditCard" size={16} /><Icon name="Smartphone" size={16} /><Icon name="Wallet" size={16} />
+
+              <input
+                type="text" value={promo} onChange={e => setPromo(e.target.value)}
+                placeholder="Промокод"
+                className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-white/30 text-sm focus:outline-none focus:border-purple-500/50 mb-4"
+              />
+
+              {/* Payment methods info */}
+              <div className="rounded-xl border border-white/7 bg-white/3 p-4 mb-4">
+                <p className="text-white/50 text-xs font-semibold mb-3 uppercase tracking-wide">Способы оплаты</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { icon: "CreditCard", label: "Карта" },
+                    { icon: "Smartphone", label: "СБП" },
+                    { icon: "Wallet", label: "Кошелёк" },
+                  ].map((m) => (
+                    <div key={m.label} className="flex flex-col items-center gap-1 py-2 rounded-xl bg-white/5">
+                      <Icon name={m.icon} size={16} className="text-white/50" />
+                      <span className="text-white/40 text-[10px]">{m.label}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <p className="text-center text-white/30 text-xs mt-2">Карта, СБП, кошелёк</p>
+
+              {error && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 mb-4">
+                  <p className="text-red-400 text-xs leading-relaxed">{error}</p>
+                </div>
+              )}
+
+              <button
+                onClick={handlePay}
+                disabled={loading}
+                className="w-full py-4 rounded-2xl font-bold text-white text-base btn-glow mb-2 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
+                style={{ background: 'linear-gradient(135deg, #a855f7, #7c3aed)' }}
+              >
+                {loading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Создаём платёж...
+                  </>
+                ) : (
+                  <>
+                    <Icon name="Lock" size={15} />
+                    Оплатить {cartTotal} ₽
+                  </>
+                )}
+              </button>
+              <p className="text-center text-white/25 text-[11px]">Безопасная оплата через ЮKassa</p>
             </div>
           </div>
         </div>
